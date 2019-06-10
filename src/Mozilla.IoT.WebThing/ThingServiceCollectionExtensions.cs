@@ -41,7 +41,11 @@ namespace Microsoft.Extensions.DependencyInjection
             }
             else
             {
-                services.TryAddSingleton(service => JsonConvert.DefaultSettings());
+                services.TryAddSingleton(new JsonSerializerSettings
+                {
+                    Formatting = Formatting.None,
+                    NullValueHandling = NullValueHandling.Ignore
+                });
             }
             
             services.AddHostedService<ActionExecutorHostedService>();

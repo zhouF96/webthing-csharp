@@ -31,11 +31,11 @@ namespace Microsoft.AspNetCore.Http
                 _ => JsonConvert.SerializeObject(value, settings) 
             };
             
-            context.Response.StatusCode = (int) statusCode;
-            context.Response.ContentType = "application/json";
-            
             await context.Response.WriteAsync(json)
                 .ConfigureAwait(false);
+            
+            context.Response.StatusCode = (int) statusCode;
+            context.Response.ContentType = "application/json";
         }
 
         public static T GetValueFromRoute<T>(this HttpContext context, string key)
