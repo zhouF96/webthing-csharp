@@ -1,53 +1,62 @@
 using System;
 using System.Collections.Generic;
 using System.Net.WebSockets;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Mozilla.IoT.WebThing.Json;
+using Microsoft.Extensions.Logging;
 
 namespace Mozilla.IoT.WebThing.WebSockets
 {
     public class SetThingProperty : IWebSocketAction
     {
-        private readonly IJsonSerializer _serializer;
+        private readonly ILogger<SetThingProperty> _logger;
 
-        public SetThingProperty(IJsonSerializer serializer)
+        public SetThingProperty(ILogger<SetThingProperty> logger)
         {
-            _serializer = serializer;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public string Action => "setProperty";
 
-        public ValueTask ExecuteAsync(Thing thing, WebSocket webSocket, IDictionary<string, object> data, CancellationToken cancellation)
+        public Task ExecuteAsync(System.Net.WebSockets.WebSocket socket, Thing thing, JsonElement data, JsonSerializerOptions options,
+            IServiceProvider provider, CancellationToken cancellationToken)
         {
-            if (data == null)
+            foreach (var propertyName in thing.ThingContext.Properties.PropertiesNames)
             {
-                return new ValueTask();
+                if (!data.TryGetProperty(options.PropertyNamingPolicy.ConvertName(propertyName), out var property))
+                {
+                    continue;
+                }
+
+                var result = thing.ThingContext.Properties.SetProperty(propertyName, property);
+                if (result == SetPropertyResult.InvalidValue)
+                {
+                    _logger.LogInformation("Invalid property value. [Thing: {thing}][Property Name: {propertyName}]", thing.Name, propertyName);
+                    
+                    var response = JsonSerializer.SerializeToUtf8Bytes(
+                        new WebSocketResponse("error", 
+                            new ErrorResponse("400 Bad Request", "Invalid property value")), options);
+
+                    socket.SendAsync(response, WebSocketMessageType.Text, true, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                if (result == SetPropertyResult.ReadOnly)
+                {
+                    _logger.LogInformation("Read-only property. [Thing: {thing}][Property Name: {propertyName}]", thing.Name, propertyName);
+                    
+                    var response = JsonSerializer.SerializeToUtf8Bytes(
+                        new WebSocketResponse("error", 
+                            new ErrorResponse("400 Bad Request", "Read-only property")), options);
+
+                    socket.SendAsync(response, WebSocketMessageType.Text, true, cancellationToken)
+                        .ConfigureAwait(false);
+                    
+                }
             }
             
-            var tasks = new LinkedList<Task>();
-
-            foreach ((string key, object token) in data)
-            {
-                try
-                {
-                    thing.Properties.SetProperty(key, token);
-                }
-                catch (Exception exception)
-                {
-                    tasks.AddLast(webSocket.SendAsync(new ArraySegment<byte>(_serializer.Serialize(new Dictionary<string, object>
-                    {
-                        ["messageType"] = MessageType.Error.ToString().ToLower(), 
-                        ["data"] =  new Dictionary<string, object>
-                        {
-                            ["status"] = "400 Bad Request",
-                            ["message"] = exception.Message
-                        }
-                    })), WebSocketMessageType.Text, true, cancellation));
-                }
-            }
-
-            return tasks.Count == 0 ? new ValueTask() : new ValueTask(Task.WhenAll(tasks));
+            return Task.CompletedTask;
         }
     }
 }
